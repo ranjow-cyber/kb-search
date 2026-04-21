@@ -17,15 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pobierz model embeddingów podczas budowania obrazu
-# (żeby nie pobierać przy każdym starcie kontenera)
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
-
 # Kod aplikacji
 COPY . .
 
-# Utwórz katalog na dane (baza SQLite + uploady)
-RUN mkdir -p /data/uploads
+# Katalog na dane (baza SQLite + uploady + cache modelu)
+RUN mkdir -p /data/uploads /data/models
 
 EXPOSE 8000
 

@@ -1,28 +1,26 @@
-FROM python:3.12-slim
+# ============================================================
+#  database.py — SQLite connection helper
+# ============================================================
+import sqlite3
+import os
+from pathlib import Path
 
-# Zmienne środowiskowe
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    KB_DB_PATH=/data/knowledge_base.db \
-    KB_UPLOAD_DIR=/data/uploads
+DB_PATH = os.getenv("KB_DB_PATH", "knowledge_base.db")
 
-WORKDIR /app
 
-# Zależności systemowe (pdfplumber wymaga libgomp)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+def get_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")   # lepsza wydajność przy równoległych odczytach
+    return conn
 
-# Zależności Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Kod aplikacji
-COPY . .
-
-# Katalog na dane (baza SQLite + uploady + cache modelu)
-RUN mkdir -p /data/uploads /data/models
-
-EXPOSE 8000
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+def init_db() -> None:
+    """Utwórz tabele jeśli nie istnieją (przy pierwszym uruchomieniu)."""
+    schema = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
+    conn = get_conn()
+    conn.executescript(schema)
+    conn.commit()
+    conn.close()
+    print(f"✅ Baza danych gotowa: {DB_PATH}")

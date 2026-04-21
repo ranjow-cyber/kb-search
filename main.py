@@ -335,3 +335,18 @@ def _index_attachment(att_id: int, file_path: str):
         )
     conn.commit()
     conn.close()
+
+
+@app.get("/articles/list")
+async def list_articles():
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT a.id, a.title, a.summary, a.slug,
+               c.name AS category
+        FROM kb_articles a
+        LEFT JOIN kb_categories c ON c.id = a.category_id
+        WHERE a.is_published = 1
+        ORDER BY a.updated_at DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

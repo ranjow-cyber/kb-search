@@ -55,9 +55,9 @@ def _seed_demo_data():
     logger.info("Wstawianie danych demo...")
 
     # kategorie
-    conn.execute("INSERT INTO kb_categories (name, slug) VALUES ('Prompt Engineering', 'prompt-engineering')")
-    conn.execute("INSERT INTO kb_categories (name, slug) VALUES ('Techniki AI', 'techniki-ai')")
-    conn.execute("INSERT INTO kb_categories (name, slug) VALUES ('Bezpieczeństwo AI', 'bezpieczenstwo-ai')")
+    conn.execute("INSERT OR IGNORE INTO kb_categories (name, slug) VALUES ('Prompt Engineering', 'prompt-engineering')")
+    conn.execute("INSERT OR IGNORE INTO kb_categories (name, slug) VALUES ('Techniki AI', 'techniki-ai')")
+    conn.execute("INSERT OR IGNORE INTO kb_categories (name, slug) VALUES ('Bezpieczeństwo AI', 'bezpieczenstwo-ai')")
     conn.commit()
 
     articles = [

@@ -1192,6 +1192,11 @@ async def search(
     category_id: int | None = None,
 ):
     results = searcher.search(q, top_k=top_k, mode=mode, category_id=category_id)
+    # Filtruj wyniki — pokaż tylko jeśli FTS > 0 LUB semantic >= 0.45
+    filtered = [
+        r for r in results
+        if r.fts_score > 0 or r.semantic_score >= 0.45
+    ]
     return [
         SearchResponse(
             article_id=r.article_id, title=r.title, summary=r.summary,
@@ -1200,7 +1205,7 @@ async def search(
             hybrid_score=round(r.hybrid_score, 6),
             matched_chunks=r.matched_chunks, source_types=list(set(r.source_types)),
         )
-        for r in results
+        for r in filtered
     ]
 
 

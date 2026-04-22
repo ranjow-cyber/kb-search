@@ -1638,6 +1638,42 @@ async def get_article(article_id: int):
     return dict(row)
 
 
+@app.get("/articles/{article_id}/attachments")
+async def get_attachments(article_id: int):
+    """Pobierz listę załączników artykułu."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT id, file_name, file_type, file_size_kb, extracted_text, is_indexed, created_at
+        FROM kb_attachments
+        WHERE article_id = ?
+        ORDER BY created_at DESC
+    """, (article_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/attachments/{attachment_id}/download")
+async def download_attachment(attachment_id: int):
+    """Pobierz plik załącznika."""
+    from fastapi.responses import FileResponse
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT file_name, file_path, file_type FROM kb_attachments WHERE id = ?",
+        (attachment_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Załącznik nie istnieje")
+    file_path = Path(row["file_path"])
+    if not file_path.exists():
+        raise HTTPException(404, "Plik nie istnieje na dysku")
+    return FileResponse(
+        path=str(file_path),
+        filename=row["file_name"],
+        media_type="application/octet-stream"
+    )
+
+
 @app.get("/kb/articles")
 async def list_articles():
     conn = get_conn()

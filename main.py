@@ -1294,6 +1294,9 @@ def _index_attachment(att_id: int, file_path: str):
     conn.close()
 
 
+
+
+
 @app.get("/articles/{article_id}")
 async def get_article(article_id: int):
     """Pobierz pełną treść artykułu."""
@@ -1311,7 +1314,331 @@ async def get_article(article_id: int):
     return dict(row)
 
 
-@app.get("/articles/list")
+@app.post("/articles")
+async def create_article(article: ArticleCreate, background_tasks: BackgroundTasks):
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO kb_articles (title, slug, summary, content, author, category_id) VALUES (?,?,?,?,?,?)",
+        (article.title, article.slug, article.summary, article.content, article.author, article.category_id)
+    )
+    article_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    background_tasks.add_task(_index_article, article_id, article.title, article.content)
+    return {"id": article_id, "message": "Artykuł utworzony, indeksowanie w toku"}
+
+
+@app.post("/articles/{article_id}/attachments")
+async def upload_attachment(article_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".pdf", ".docx", ".md", ".txt"}:
+        raise HTTPException(415, "Nieobsługiwany format pliku")
+
+    dest = UPLOAD_DIR / f"{article_id}_{file.filename}"
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO kb_attachments (article_id, file_name, file_type, file_path, file_size_kb) VALUES (?,?,?,?,?)",
+        (article_id, file.filename, suffix.lstrip("."), str(dest), dest.stat().st_size // 1024)
+    )
+    att_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    background_tasks.add_task(_index_attachment, att_id, str(dest))
+    return {"id": att_id, "message": "Załącznik wgrany, indeksowanie w toku"}
+
+
+@app.get("/categories")
+async def list_categories():
+    conn = get_conn()
+    rows = conn.execute("SELECT id, name, slug FROM kb_categories ORDER BY name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# ------------------------------------------------------------------
+# Background tasks
+# ------------------------------------------------------------------
+def _index_article(article_id: int, title: str, content: str):
+    model = get_model()
+    chunks = chunk_text(f"{title}\n\n{content}")
+    embeddings = model.encode(chunks, normalize_embeddings=True)
+    conn = get_conn()
+    conn.execute("DELETE FROM kb_embeddings WHERE source_type='article' AND source_id=?", (article_id,))
+    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        conn.execute(
+            "INSERT INTO kb_embeddings (source_type, source_id, chunk_index, chunk_text, embedding_model, embedding_json) VALUES (?,?,?,?,?,?)",
+            ("article", article_id, idx, chunk, MODEL_NAME, json.dumps(emb.tolist()))
+        )
+    conn.commit()
+    conn.close()
+
+
+def _index_attachment(att_id: int, file_path: str):
+    try:
+        text = extract_text(file_path)
+    except Exception as e:
+        logger.error(f"Ekstrakcja załącznika {att_id}: {e}")
+        return
+    conn = get_conn()
+    conn.execute("UPDATE kb_attachments SET extracted_text=?, is_indexed=1 WHERE id=?", (text, att_id))
+    conn.commit()
+    model = get_model()
+    chunks = chunk_text(text)
+    embeddings = model.encode(chunks, normalize_embeddings=True)
+    conn.execute("DELETE FROM kb_embeddings WHERE source_type='attachment_chunk' AND source_id=?", (att_id,))
+    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        conn.execute(
+            "INSERT INTO kb_embeddings (source_type, source_id, chunk_index, chunk_text, embedding_model, embedding_json) VALUES (?,?,?,?,?,?)",
+            ("attachment_chunk", att_id, idx, chunk, MODEL_NAME, json.dumps(emb.tolist()))
+        )
+    conn.commit()
+    conn.close()
+
+
+@app.get("/articles/{article_id}")
+async def get_article(article_id: int):
+    """Pobierz pełną treść artykułu."""
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT a.id, a.title, a.slug, a.summary, a.content, a.author,
+               c.name AS category, a.created_at, a.updated_at
+        FROM kb_articles a
+        LEFT JOIN kb_categories c ON c.id = a.category_id
+        WHERE a.id = ? AND a.is_published = 1
+    """, (article_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Artykuł nie istnieje")
+    return dict(row)
+
+
+@app.post("/articles")
+async def create_article(article: ArticleCreate, background_tasks: BackgroundTasks):
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO kb_articles (title, slug, summary, content, author, category_id) VALUES (?,?,?,?,?,?)",
+        (article.title, article.slug, article.summary, article.content, article.author, article.category_id)
+    )
+    article_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    background_tasks.add_task(_index_article, article_id, article.title, article.content)
+    return {"id": article_id, "message": "Artykuł utworzony, indeksowanie w toku"}
+
+
+@app.post("/articles/{article_id}/attachments")
+async def upload_attachment(article_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".pdf", ".docx", ".md", ".txt"}:
+        raise HTTPException(415, "Nieobsługiwany format pliku")
+
+    dest = UPLOAD_DIR / f"{article_id}_{file.filename}"
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO kb_attachments (article_id, file_name, file_type, file_path, file_size_kb) VALUES (?,?,?,?,?)",
+        (article_id, file.filename, suffix.lstrip("."), str(dest), dest.stat().st_size // 1024)
+    )
+    att_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    background_tasks.add_task(_index_attachment, att_id, str(dest))
+    return {"id": att_id, "message": "Załącznik wgrany, indeksowanie w toku"}
+
+
+@app.get("/categories")
+async def list_categories():
+    conn = get_conn()
+    rows = conn.execute("SELECT id, name, slug FROM kb_categories ORDER BY name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# ------------------------------------------------------------------
+# Background tasks
+# ------------------------------------------------------------------
+def _index_article(article_id: int, title: str, content: str):
+    model = get_model()
+    chunks = chunk_text(f"{title}\n\n{content}")
+    embeddings = model.encode(chunks, normalize_embeddings=True)
+    conn = get_conn()
+    conn.execute("DELETE FROM kb_embeddings WHERE source_type='article' AND source_id=?", (article_id,))
+    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        conn.execute(
+            "INSERT INTO kb_embeddings (source_type, source_id, chunk_index, chunk_text, embedding_model, embedding_json) VALUES (?,?,?,?,?,?)",
+            ("article", article_id, idx, chunk, MODEL_NAME, json.dumps(emb.tolist()))
+        )
+    conn.commit()
+    conn.close()
+
+
+def _index_attachment(att_id: int, file_path: str):
+    try:
+        text = extract_text(file_path)
+    except Exception as e:
+        logger.error(f"Ekstrakcja załącznika {att_id}: {e}")
+        return
+    conn = get_conn()
+    conn.execute("UPDATE kb_attachments SET extracted_text=?, is_indexed=1 WHERE id=?", (text, att_id))
+    conn.commit()
+    model = get_model()
+    chunks = chunk_text(text)
+    embeddings = model.encode(chunks, normalize_embeddings=True)
+    conn.execute("DELETE FROM kb_embeddings WHERE source_type='attachment_chunk' AND source_id=?", (att_id,))
+    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        conn.execute(
+            "INSERT INTO kb_embeddings (source_type, source_id, chunk_index, chunk_text, embedding_model, embedding_json) VALUES (?,?,?,?,?,?)",
+            ("attachment_chunk", att_id, idx, chunk, MODEL_NAME, json.dumps(emb.tolist()))
+        )
+    conn.commit()
+    conn.close()
+
+
+
+
+
+@app.get("/articles/{article_id}")
+async def get_article(article_id: int):
+    """Pobierz pełną treść artykułu."""
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT a.id, a.title, a.slug, a.summary, a.content, a.author,
+               c.name AS category, a.created_at, a.updated_at
+        FROM kb_articles a
+        LEFT JOIN kb_categories c ON c.id = a.category_id
+        WHERE a.id = ? AND a.is_published = 1
+    """, (article_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Artykuł nie istnieje")
+    return dict(row)
+
+
+@app.post("/articles")
+async def create_article(article: ArticleCreate, background_tasks: BackgroundTasks):
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO kb_articles (title, slug, summary, content, author, category_id) VALUES (?,?,?,?,?,?)",
+        (article.title, article.slug, article.summary, article.content, article.author, article.category_id)
+    )
+    article_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    background_tasks.add_task(_index_article, article_id, article.title, article.content)
+    return {"id": article_id, "message": "Artykuł utworzony, indeksowanie w toku"}
+
+
+@app.post("/articles/{article_id}/attachments")
+async def upload_attachment(article_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".pdf", ".docx", ".md", ".txt"}:
+        raise HTTPException(415, "Nieobsługiwany format pliku")
+
+    dest = UPLOAD_DIR / f"{article_id}_{file.filename}"
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO kb_attachments (article_id, file_name, file_type, file_path, file_size_kb) VALUES (?,?,?,?,?)",
+        (article_id, file.filename, suffix.lstrip("."), str(dest), dest.stat().st_size // 1024)
+    )
+    att_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    background_tasks.add_task(_index_attachment, att_id, str(dest))
+    return {"id": att_id, "message": "Załącznik wgrany, indeksowanie w toku"}
+
+
+@app.get("/categories")
+async def list_categories():
+    conn = get_conn()
+    rows = conn.execute("SELECT id, name, slug FROM kb_categories ORDER BY name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# ------------------------------------------------------------------
+# Background tasks
+# ------------------------------------------------------------------
+def _index_article(article_id: int, title: str, content: str):
+    model = get_model()
+    chunks = chunk_text(f"{title}\n\n{content}")
+    embeddings = model.encode(chunks, normalize_embeddings=True)
+    conn = get_conn()
+    conn.execute("DELETE FROM kb_embeddings WHERE source_type='article' AND source_id=?", (article_id,))
+    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        conn.execute(
+            "INSERT INTO kb_embeddings (source_type, source_id, chunk_index, chunk_text, embedding_model, embedding_json) VALUES (?,?,?,?,?,?)",
+            ("article", article_id, idx, chunk, MODEL_NAME, json.dumps(emb.tolist()))
+        )
+    conn.commit()
+    conn.close()
+
+
+def _index_attachment(att_id: int, file_path: str):
+    try:
+        text = extract_text(file_path)
+    except Exception as e:
+        logger.error(f"Ekstrakcja załącznika {att_id}: {e}")
+        return
+    conn = get_conn()
+    conn.execute("UPDATE kb_attachments SET extracted_text=?, is_indexed=1 WHERE id=?", (text, att_id))
+    conn.commit()
+    model = get_model()
+    chunks = chunk_text(text)
+    embeddings = model.encode(chunks, normalize_embeddings=True)
+    conn.execute("DELETE FROM kb_embeddings WHERE source_type='attachment_chunk' AND source_id=?", (att_id,))
+    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        conn.execute(
+            "INSERT INTO kb_embeddings (source_type, source_id, chunk_index, chunk_text, embedding_model, embedding_json) VALUES (?,?,?,?,?,?)",
+            ("attachment_chunk", att_id, idx, chunk, MODEL_NAME, json.dumps(emb.tolist()))
+        )
+    conn.commit()
+    conn.close()
+
+
+@app.get("/articles/{article_id}")
+async def get_article(article_id: int):
+    """Pobierz pełną treść artykułu."""
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT a.id, a.title, a.slug, a.summary, a.content, a.author,
+               c.name AS category, a.created_at, a.updated_at
+        FROM kb_articles a
+        LEFT JOIN kb_categories c ON c.id = a.category_id
+        WHERE a.id = ? AND a.is_published = 1
+    """, (article_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Artykuł nie istnieje")
+    return dict(row)
+
+
+@app.get("/kb/articles")
 async def list_articles():
     conn = get_conn()
     rows = conn.execute("""

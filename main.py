@@ -1294,6 +1294,23 @@ def _index_attachment(att_id: int, file_path: str):
     conn.close()
 
 
+@app.get("/articles/{article_id}")
+async def get_article(article_id: int):
+    """Pobierz pełną treść artykułu."""
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT a.id, a.title, a.slug, a.summary, a.content, a.author,
+               c.name AS category, a.created_at, a.updated_at
+        FROM kb_articles a
+        LEFT JOIN kb_categories c ON c.id = a.category_id
+        WHERE a.id = ? AND a.is_published = 1
+    """, (article_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Artykuł nie istnieje")
+    return dict(row)
+
+
 @app.get("/articles/list")
 async def list_articles():
     conn = get_conn()

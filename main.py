@@ -48,7 +48,7 @@ def _seed_demo_data():
     """Wstaw przykładowe artykuły jeśli baza jest pusta."""
     conn = get_conn()
     count = conn.execute("SELECT COUNT(*) FROM kb_articles").fetchone()[0]
-    if count > 0:
+    if count >= 5:
         conn.close()
         return
 

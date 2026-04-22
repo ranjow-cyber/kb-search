@@ -446,12 +446,15 @@ async def reset_demo():
     try:
         conn = get_conn()
         # usuń w odpowiedniej kolejności (foreign keys)
+        # wyłącz foreign key checks na czas czyszczenia
+        conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute("DELETE FROM kb_embeddings")
         conn.execute("DELETE FROM kb_search_logs")
         conn.execute("DELETE FROM kb_article_tags")
         conn.execute("DELETE FROM kb_attachments")
         conn.execute("DELETE FROM kb_articles")
         conn.execute("DELETE FROM kb_categories")
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.commit()
         conn.close()
         logger.info("Baza wyczyszczona, ładuję dane demo...")

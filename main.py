@@ -350,3 +350,29 @@ async def list_articles():
     """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+@app.post("/categories")
+async def create_category(data: dict):
+    """Utwórz nową kategorię."""
+    name = data.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "Nazwa kategorii jest wymagana")
+    slug = name.lower().replace(" ", "-").replace("ą","a").replace("ę","e").replace("ó","o").replace("ś","s").replace("ł","l").replace("ż","z").replace("ź","z").replace("ć","c").replace("ń","n")
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO kb_categories (name, slug) VALUES (?,?)",
+            (name, slug)
+        )
+        cat_id = cur.lastrowid
+        conn.commit()
+        return {"id": cat_id, "name": name, "slug": slug}
+    except Exception as e:
+        # kategoria już istnieje — zwróć istniejącą
+        row = conn.execute("SELECT id, name, slug FROM kb_categories WHERE name = ?", (name,)).fetchone()
+        if row:
+            return {"id": row["id"], "name": row["name"], "slug": row["slug"]}
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()

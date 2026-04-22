@@ -441,14 +441,22 @@ async def create_category(data: dict):
 @app.delete("/admin/reset-demo")
 async def reset_demo():
     """Wyczyść bazę i załaduj dane demo ponownie (tylko do testów!)."""
-    conn = get_conn()
-    conn.execute("DELETE FROM kb_embeddings")
-    conn.execute("DELETE FROM kb_attachments")
-    conn.execute("DELETE FROM kb_article_tags")
-    conn.execute("DELETE FROM kb_articles")
-    conn.execute("DELETE FROM kb_categories")
-    conn.execute("DELETE FROM kb_search_logs")
-    conn.commit()
-    conn.close()
-    _seed_demo_data()
-    return {"message": "Baza wyczyszczona i załadowana ponownie z danymi demo"}
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        conn = get_conn()
+        # usuń w odpowiedniej kolejności (foreign keys)
+        conn.execute("DELETE FROM kb_embeddings")
+        conn.execute("DELETE FROM kb_search_logs")
+        conn.execute("DELETE FROM kb_article_tags")
+        conn.execute("DELETE FROM kb_attachments")
+        conn.execute("DELETE FROM kb_articles")
+        conn.execute("DELETE FROM kb_categories")
+        conn.commit()
+        conn.close()
+        logger.info("Baza wyczyszczona, ładuję dane demo...")
+        _seed_demo_data()
+        return {"message": "✅ Baza wyczyszczona i załadowana ponownie z 5 artykułami o prompt engineeringu"}
+    except Exception as e:
+        logger.error(f"Reset error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

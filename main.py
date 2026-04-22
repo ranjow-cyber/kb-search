@@ -209,7 +209,9 @@ Przy krytycznych operacjach wymagaj potwierdzenia człowieka."""),
 
         # generuj embeddingi
         chunks = chunk_text(f"{title}\n\n{content}", chunk_size=500, overlap=50)
-        embeddings = model.encode(chunks, normalize_embeddings=True)
+        embeddings = list(model.embed(chunks))
+        import numpy as np
+        embeddings = np.array(embeddings, dtype=np.float32)
         for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
             conn.execute(
                 "INSERT INTO kb_embeddings (source_type, source_id, chunk_index, chunk_text, embedding_model, embedding_json) VALUES (?,?,?,?,?,?)",
